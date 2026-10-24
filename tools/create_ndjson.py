@@ -4,6 +4,7 @@ import os
 import json
 import tarfile
 import io
+import tempfile
 from typing import Dict, List, Union, cast
 
 # --- JSON types ---
@@ -140,19 +141,26 @@ def write_tar(network: str, raw: RawRoot) -> None:
     columns: ColumnsMap = extract_columns(raw)
     meta: MetaMap = extract_meta(raw)
 
-    with tarfile.open(tar_path, "w:gz", compresslevel=9) as tar:
+    # A failed rebuild must never truncate the last good archive.
+    # Staging in JSON_DIR keeps the final rename on the same filesystem.
+    with tempfile.TemporaryDirectory(prefix=f".{network}-", dir=JSON_DIR) as staging_dir:
+        staged_path = os.path.join(staging_dir, f"{network}-ndjson.tar.gz")
+        with tarfile.open(staged_path, "w:gz", compresslevel=9) as tar:
 
-        # --- DATA ---
-        for category, items in data.items():
-            write_ndjson_file(tar, f"{category}.ndjson", items)
+            # --- DATA ---
+            for category, items in data.items():
+                write_ndjson_file(tar, f"{category}.ndjson", items)
 
-        # --- COLUMNS ---
-        for category, cols in columns.items():
-            write_json_file(tar, f"columns/{category}.json", cols)
+            # --- COLUMNS ---
+            for category, cols in columns.items():
+                write_json_file(tar, f"columns/{category}.json", cols)
 
-        # --- META ---
-        for meta_key, rows in meta.items():
-            write_ndjson_file(tar, f"meta/{meta_key}.ndjson", rows)
+            # --- META ---
+            for meta_key, rows in meta.items():
+                write_ndjson_file(tar, f"meta/{meta_key}.ndjson", rows)
+
+        # Publish only after tar/gzip has fully closed without errors.
+        os.replace(staged_path, tar_path)
 
     print(f"Created {tar_path}")
 
